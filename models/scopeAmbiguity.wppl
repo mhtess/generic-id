@@ -1,0 +1,94 @@
+// N.B.: viz package has different behavior on the command line
+// recommend just using webppl.org
+
+// possible world states
+var states = [
+  {inContext: 0, inGeneral: true},
+  {inContext: 1, inGeneral: true},
+  {inContext: 2, inGeneral: true},
+  {inContext: 0, inGeneral: false},
+  {inContext: 1, inGeneral: false},
+  {inContext: 2, inGeneral: false}
+];
+
+var statePrior = function() {
+  uniformDraw(states);
+}
+
+// possible utterances
+var utterances = ["A bear eats honey","The bears eat honey", "null"];
+var utterancePrior = function(){
+  return uniformDraw(utterances);
+}
+// possible scopes
+var scopePrior = function(){ 
+  return uniformDraw(["generic", "specific"])
+}
+
+// meaning function
+var meaning = function(utterance, state, scope) {
+  utterance == "null" ? true : 
+  utterance == "The bears eat honey" ? 
+    scope == "generic" ? state.inGeneral :
+                         state.inContext == 2 : 
+  utterance == "A bear eats honey" ? 
+    scope == "generic" ? state.inGeneral : 
+                         state.inContext >= 1 : 
+  true;
+};
+
+// Literal listener (L0)
+var literalListener = function(utterance, scope) {
+  return Infer({method:"enumerate"},
+               function(){
+    var state = statePrior();
+    // display('l0')
+    // display(_.extend(state, {utt: utterance, scope: scope}))
+    condition(meaning(utterance, state, scope));
+    return state;
+  });
+};
+
+
+// Speaker (S)
+var speaker = function(scope, state) {
+  return Infer({method:"enumerate"},
+               function(){
+    var utterance = utterancePrior();
+    observe(literalListener(utterance, scope), state);
+    return utterance;
+  });
+};
+
+// Pragmatic listener (L1)
+var pragmaticListener = function(utterance) {
+  return Infer({method:"enumerate"},
+               function(){
+    var state = statePrior();
+    var scope = scopePrior();
+    // display('l1')
+    // display(JSON.stringify(_.extend(state, {scope: scope} )))
+    var S1 = speaker(scope, state);
+    // display('s1 score = ' + S1.score(utterance))
+    observe(S1, utterance);
+    return _.extend(state, {scope: scope})
+                           // speakerLogProb: speaker(scope,state).score(utterance)} )
+  });
+};
+
+// viz.marginals(pragmaticListener("null"))
+// viz.marginals(pragmaticListener("The bears eat honey"))
+viz.marginals(pragmaticListener("A bear eats honey"))
+
+// viz(speaker("specific", {inContext: 0, inGeneral: false}))
+// viz(speaker("specific", {inContext: 1, inGeneral: false}))
+// viz(speaker("specific", {inContext: 2, inGeneral: false}))
+
+
+// viz.table(literalListener("The bears eat honey", "specific"))
+// viz.table(literalListener("A bear eats honey", "specific"))
+
+// viz.table(literalListener("The bears eat honey", "generic"))
+// viz.table(literalListener("A bear eats honey", "generic"))
+
+// meaning("A bear eats honey", "in general", "specific")
