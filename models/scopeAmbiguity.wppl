@@ -71,7 +71,7 @@ var pragmaticListener = function(utterance) {
     var S1 = speaker(scope, state);
     // display('s1 score = ' + S1.score(utterance))
     observe(S1, utterance);
-    return _.extend(state, {scope: scope})
+    return {state: state, scope: scope}
                            // speakerLogProb: speaker(scope,state).score(utterance)} )
   });
 };
