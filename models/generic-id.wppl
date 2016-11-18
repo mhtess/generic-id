@@ -1,0 +1,108 @@
+// discretized range between 0 - 1
+var bins = _.range(0.01, 1, 0.05);
+var thresholdBins = _.range(0, 1, 0.05);
+
+// function returns a discretized Beta PDF
+var discretizeBeta = function(g, d){
+  var shape_alpha =  g * d
+  var shape_beta = (1-g) * d
+  var betaPDF = function(x){
+    return Math.pow(x,shape_alpha-1)*Math.pow((1-x),shape_beta-1)
+  }
+  return map(betaPDF, bins)
+}
+
+var structuredPriorModel = function(params){
+  Infer({method: "enumerate"}, function(){
+    // unpack parameters
+    var potential = params["potential"]
+    var g = params["prevalenceWhenPresent"]
+    var d = params["concentrationWhenPresent"]
+    var propertyIsPresent = flip(potential)
+    var prevalence = propertyIsPresent ? 
+        categorical(discretizeBeta(g,d), bins) : 
+    0
+    return prevalence
+  })
+}
+///
+
+var alpha_1 = 5;
+var alpha_2 = 1;
+
+var utterances = ["Bears eat honey", "A bear eats honey","null"];
+//                   "The bears eat honey", "null"];
+
+var thresholdPrior = function() { return uniformDraw(thresholdBins) };
+var utterancePrior = function() { return uniformDraw(utterances) }
+
+var scopePrior = function(){ 
+  return uniformDraw(["generic", "specific"])
+}
+
+var meaning = function(utterance, prevalence, numInContext, threshold, scope) {
+  return utterance === "null" ? true : 
+  scope === "generic" ? prevalence > threshold : 
+  utterance === "A bear eats honey" ? numInContext >= 1 :
+  utterance === "The bears eat honey" ? numInContext >= 2 :
+  utterance === "The bear eats honey" ? numInContext === 1 :
+  utterance === "Bears eat honey" ? numInContext >= 2 :
+  true
+}
+
+var prevalencePrior = structuredPriorModel({
+  potential: 0.3, 
+  prevalenceWhenPresent: 0.5, 
+  concentrationWhenPresent: 2
+})
+
+var bearsInContext = 5;
+
+var literalListener = cache(function(utterance, threshold, scope) {  
+  Infer({method: "enumerate"}, function(){
+    var prevalence = sample(prevalencePrior);
+    var bearsEatingHoney = binomial(prevalence, bearsInContext);
+    var state = scope === "generic" ? prevalence : bearsEatingHoney
+    var m = meaning(utterance, prevalence, bearsEatingHoney, threshold, scope)
+    condition(m)
+    return state
+  })
+})
+
+var speaker1 = cache(function(state, threshold, scope) {
+  Infer({method: "enumerate"}, function(){
+    var utterance = utterancePrior()
+    var L0 = literalListener(utterance, threshold, scope)
+    factor( alpha_1*L0.score(state) )
+    return utterance
+  })
+})
+
+
+var pragmaticListener = function(utterance) {
+  Infer({method: "enumerate"}, function(){
+    var prevalence = sample(prevalencePrior);
+    var bearsEatingHoney = binomial(prevalence, bearsInContext);
+    var scope = scopePrior();
+    var threshold = thresholdPrior();
+    var state = scope === "generic" ? prevalence : bearsEatingHoney
+    var S1 = speaker1(state, threshold, scope);
+    observe(S1, utterance);
+    return {
+//       prevalence: prevalence, 
+      bearsEatingHoney: bearsEatingHoney,
+      scope: scope
+    }
+
+  })
+}
+
+// "Bears eat honey."
+
+
+var bearsEatHoney = pragmaticListener("Bears eat honey");
+// viz.hist(prevalencePrior)
+viz.marginals(bearsEatHoney)
+
+var bearsEatHoney = pragmaticListener("A bear eats honey");
+viz.marginals(bearsEatHoney)
