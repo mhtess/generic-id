@@ -12,6 +12,11 @@ var discretizeBeta = function(g, d){
   return map(betaPDF, bins)
 }
 
+
+var displayObj = function(obj){
+  display(JSON.stringify(obj));
+};
+
 var structuredPriorModel = function(params){
   Infer({method: "enumerate"}, function(){
     // unpack parameters
@@ -19,8 +24,8 @@ var structuredPriorModel = function(params){
     var g = params["prevalenceWhenPresent"]
     var d = params["concentrationWhenPresent"]
     var propertyIsPresent = flip(potential)
-    var prevalence = propertyIsPresent ? 
-        categorical(discretizeBeta(g,d), bins) : 
+    var prevalence = propertyIsPresent ?
+        categorical(discretizeBeta(g,d), bins) :
     0
     return prevalence
   })
@@ -30,86 +35,85 @@ var structuredPriorModel = function(params){
 var alpha_1 = 5;
 var alpha_2 = 1;
 
-var utterances = ["Bears eat honey", "A bear eats honey", "null"];
+var utterances = ["Bears eat honey", "A bear eats honey", "silence"];
 //                   "The bears eat honey", "null"];
 
 var thresholdPrior = function() { return uniformDraw(thresholdBins) };
 var utterancePrior = function() { return uniformDraw(utterances) }
 
-var scopePrior = function(){ 
+var sensePrior = function(){
   return uniformDraw(["generic", "specific"])
 }
 var prevalencePrior = structuredPriorModel({
-  potential: 0.3, 
-  prevalenceWhenPresent: 0.5, 
+  potential: 0.3,
+  prevalenceWhenPresent: 0.5,
   concentrationWhenPresent: 2
 })
 
 
-var meaning = function(utterance, prevalence, numInContext, threshold, scope) {
-  return utterance === "null" ? true : 
-  scope === "generic" ? prevalence > threshold : 
-  utterance === "A bear eats honey" ? numInContext >= 1 :
-  utterance === "The bears eat honey" ? numInContext >= 2 :
-  utterance === "The bear eats honey" ? numInContext === 1 :
-  utterance === "Bears eat honey" ? numInContext >= 2 :
+var meaning = function(utterance, prevalence, positiveExamples, threshold, sense, context) {
+  utterance === "silence" ? true :
+  sense === "generic" ? prevalence > threshold :
+  context == 0 ? true : // this is a band-aid to make this run, but destroys the inferences
+  utterance === "A bear eats honey" ? positiveExamples >= 1 :
+  utterance === "The bears eat honey" ? positiveExamples >= 2 :
+  utterance === "The bear eats honey" ? positiveExamples === 1 :
+  utterance === "Bears eat honey" ? positiveExamples >= 2 :
   true
 }
 
-
-// var bearsInContext = 5;
-
-var literalListener = cache(function(utterance, threshold, scope, bearsInContext) {  
+var literalListener = cache(function(utterance, threshold, sense, context) {
   Infer({method: "enumerate"}, function(){
-    // a bear & bears ? sample(bearsInContextPrior) : bearsInContext
     var prevalence = sample(prevalencePrior);
-    var bearsEatingHoney = binomial(prevalence, bearsInContext);
-    //     var state = scope === "generic" ? prevalence : bearsEatingHoney
-    var state = {prevalence, bearsEatingHoney}
-    var m = meaning(utterance, prevalence, bearsEatingHoney, threshold, scope)
+    // var context = flip() ? 0 : 5; // unlift context var
+    var positiveExamples = context > 0 ? prevalence > 0 ? binomial({p: prevalence, n: context}) : 0 : 0;
+    // var sense = uniformDraw(["generic", "specific"]); // unlift sense var
+    var m = meaning(utterance, prevalence, positiveExamples, threshold, sense, context)
     condition(m)
-    return state
+    var qudVal = {prevalence, positiveExamples};
+    return qudVal
   })
 })
 
-var speaker1 = cache(function(state, threshold, scope, bearsInContext) {
+var speaker1 = cache(function(threshold, sense, context, prevalence, positiveExamples) {
   Infer({method: "enumerate"}, function(){
     var utterance = utterancePrior()
-    var L0 = literalListener(utterance, threshold, scope, bearsInContext)
-    factor( alpha_1*L0.score(state) )
+    var L0 = literalListener(utterance, threshold, sense, context)
+    var qudVal = {prevalence, positiveExamples};
+    factor( alpha_1*L0.score(qudVal) )
     return utterance
   })
 })
 
+// var s1  = speaker1(0, "specific", 0, 0, 0)
+// var l0 = literalListener("A bear eats honey", 0, "specific", 0)
 
-var pragmaticListener = function(utterance) {
+var pragmaticListener = function(utterance, observedContext) {
   Infer({method: "enumerate"}, function(){
+    // abstract knowledge
     var prevalence = sample(prevalencePrior);
-    var bearsInContext = binomial({p:0.1, n:5});
-    var bearsEatingHoney = binomial(prevalence, bearsInContext);
-//     display(bearsEatingHoney)
-    var scope = scopePrior();
-    var threshold = thresholdPrior();
-    var state = {prevalence, bearsEatingHoney}
-    //     var state = scope === "generic" ? prevalence : bearsEatingHoney
-    var S1 = speaker1(state, threshold, scope, bearsInContext);
-    observe(S1, utterance);
-    return {
-      //       prevalence: prevalence, 
-//       bearsEatingHoney: bearsEatingHoney,
-      scope: scope
-    }
+    // concrete knowledge
+    // var context = flip() ? 5 : 0; // uncertainty over context
+    var context = observedContext ? 5 : 0; // observed context
+    // softer constraints on context var
+    // categorical({
+    //   vs: [0, 5],
+    //   ps: observedContext ? [0.1, 0.9] : [0.9, 0.1]
+    // });
+    var positiveExamples = context > 0 ? prevalence > 0 ? binomial({p: prevalence, n: context}) : 0 : 0;
 
+    // semantic knowledge
+    var sense = uniformDraw(["generic", "specific"]);
+    var threshold = sense === "generic" ? uniformDraw(thresholdBins) : -9;
+    // displayObj({context, sense})
+    var S1 = speaker1(threshold, sense, context, prevalence, positiveExamples);
+    observe(S1, utterance);
+    return sense
   })
 }
 
-// "Bears eat honey."
-// viz(prevalencePrior)
+var posterior = pragmaticListener("A bear eats honey", true);
+display("specific interpretation (with context) : " + Math.exp(posterior.score("specific")))
 
-var bearsEatHoney = pragmaticListener("Bears eat honey");
-// viz.hist(prevalencePrior)
-viz.marginals(bearsEatHoney)
-
-// var bearsEatHoney = pragmaticListener("A bear eats honey");
-// viz.marginals(bearsEatHoney)
-
+var posterior2 = pragmaticListener("A bear eats honey", false);
+display( "specific interpretation (no context) : " + Math.exp(posterior2.score("specific")))
